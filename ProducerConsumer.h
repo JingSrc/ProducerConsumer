@@ -52,25 +52,13 @@ public:
 
 	ProducerConsumerIterator& operator++()
 	{
-		*this = c_->next();
+		v_ = c_->pop();
+		end_ = c_->is_opened();
 		return *this;
 	}
 
-	ProducerConsumerIterator& operator++(int)
-	{
-		*this = c_->next();
-		return *this;
-	}
-
-	reference operator*()
-	{
-		return v_;
-	}
-
-	pointer operator->()
-	{
-		return &v_;
-	}
+	reference operator*() { return v_; }
+	pointer operator->() { return &v_; }
 
 private:
 	bool end_;
@@ -82,67 +70,61 @@ template<typename T>
 class ProducerConsumer
 {
 public:
-    using container_type  = std::queue<T>;
-    using value_type      = typename container_type::value_type;
-    using reference       = typename container_type::reference;
-    using iterator        = ProducerConsumerIterator<ProducerConsumer>;
-    using size_type       = typename container_type::size_type;
-    using difference_type = ptrdiff_t;
+	using container_type  = std::queue<T>;
+	using value_type      = typename container_type::value_type;
+	using reference       = typename container_type::reference;
+	using iterator        = ProducerConsumerIterator<ProducerConsumer>;
+	using size_type       = typename container_type::size_type;
+	using difference_type = ptrdiff_t;
 
-    ProducerConsumer()
-	    : end_{true}
-    {
-		
-    }
+	explicit ProducerConsumer(size_t size = 0)
+		: end_{ true }, max_size_{ size } {}
 
-    ~ProducerConsumer()
-    {
-		close();
-    }
+	~ProducerConsumer() = default;
 
 	ProducerConsumer(ProducerConsumer&) = delete;
 	ProducerConsumer(ProducerConsumer&&) = delete;
-	ProducerConsumer &operator=(ProducerConsumer&) = delete;
+	ProducerConsumer& operator=(ProducerConsumer&) = delete;
 	ProducerConsumer& operator=(ProducerConsumer&&) = delete;
+
+	bool is_opened() const { return !end_; }
 
 	void open() { end_ = false; }
 	void close() { end_ = true; }
 
-    iterator begin() noexcept
-    {
-		return next();
-    }
+	iterator begin() noexcept
+	{
+		if (end_)
+			return end();
 
-    iterator end() noexcept
-    {
+		return ProducerConsumerIterator<ProducerConsumer>{this, pop(), end_};
+	}
+
+	iterator end() noexcept
+	{
 		return ProducerConsumerIterator<ProducerConsumer>{this, value_type{}, true};
-    }
+	}
 
-    bool empty() const
-    {
+	bool empty() const
+	{
 		std::unique_lock<std::mutex> lock{ value_mutex_ };
 		return values_.empty();
-    }
+	}
 
-    size_type size() const
-    {
+	size_type size() const
+	{
 		std::unique_lock<std::mutex> lock{ value_mutex_ };
 		return values_.size();
-    }
-
-	iterator next() noexcept
-    {
-		auto v = pop();
-		return ProducerConsumerIterator<ProducerConsumer>{this, v, end_};
-    }
+	}
 
 	value_type pop() noexcept
-    {
+	{
 		if (end_)
 			return value_type{};
 
+
 		std::unique_lock<std::mutex> lock{ mutex_ };
-		cond_.wait(lock, [this] { return (this->end_ || this->values_.size() > 0); });
+		not_empty_.wait(lock, [this] { return (this->end_ || this->values_.size() > 0); });
 
 		value_mutex_.lock();
 		if (end_ || values_.empty()) {
@@ -153,26 +135,36 @@ public:
 		auto v = values_.front();
 		values_.pop();
 		value_mutex_.unlock();
+		not_full_.notify_one();
 		return v;
-    }
+	}
 
 	void push(value_type v) noexcept
-    {
+	{
 		if (end_)
 			return;
 
-		{
-			std::unique_lock<std::mutex> value_lock{ value_mutex_ };
-			values_.push(v);
+		value_mutex_.lock();
+		if (max_size_ != 0 && values_.size() >= max_size_) {
+			value_mutex_.unlock();
+
+			std::unique_lock<std::mutex> lock{ mutex_ };
+			not_full_.wait(lock, [this] { return (this->end_ || this->values_.size() < this->max_size_); });
+			value_mutex_.lock();
 		}
-		cond_.notify_one();
-    }
+
+		values_.push(v);
+		value_mutex_.unlock();
+		not_empty_.notify_one();
+	}
 
 private:
 	bool end_;
-    container_type values_;
+	size_t max_size_;
+	container_type values_;
 
 	mutable std::mutex value_mutex_;
 	mutable std::mutex mutex_;
-    std::condition_variable cond_;
+	std::condition_variable not_full_;
+	std::condition_variable not_empty_;
 };
