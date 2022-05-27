@@ -42,6 +42,32 @@ int main()
     thd1.join();
     thd2.join();
     thd3.join();
+	
+    ProducerConsumer_Ex<int> pce(10);
+    pce.open();
+
+    int i = 0, j = 5000;
+    pce.produce([&i] {
+        std::this_thread::sleep_for(500ms);
+        return i++;
+    });
+    pce.produce([&j] {
+        std::this_thread::sleep_for(400ms);
+        return j++;
+        });
+
+    pce.consume([](const auto& i) {
+        std::cout << i << " pop ---- 3 " << std::endl;
+        std::this_thread::sleep_for(1s);
+    });
+
+    pce.consume([](const auto& i) {
+        std::cout << i << " pop ---- 4 " << std::endl;
+        std::this_thread::sleep_for(800ms);
+    });
+
+    getchar();
+    pce.close();
 
     std::cout << "end" << std::endl;
 }
