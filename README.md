@@ -3,7 +3,7 @@
 示例 1 由用户管理生产者和消费者线程
 
 ```c++
-ProducerConsumer<int> pc(0);
+ProducerConsumer<int> pc(0); // 参数为队列大小，0-不限制大小
 bool running = true;
     
 pc.open();
