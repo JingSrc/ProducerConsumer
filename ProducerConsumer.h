@@ -3,6 +3,9 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <thread>
+#include <functional>
+#include <atomic>
 
 template <typename T>
 class ProducerConsumerIterator
@@ -170,4 +173,82 @@ private:
 	mutable std::mutex mutex_;
 	std::condition_variable not_full_;
 	std::condition_variable not_empty_;
+};
+
+template<typename T>
+class ProducerConsumer_Ex
+{
+public:
+	using inner_type    = ProducerConsumer<T>;
+	using value_type    = typename inner_type::value_type;
+	using size_type     = typename inner_type::size_type;
+	using producer_type = std::function<value_type()>;
+	using consumer_type = std::function<void(const T&)>;
+
+	explicit ProducerConsumer_Ex(size_t size = 0)
+		: running_{ false }, count_{ 0 }, inner_{ size } {}
+
+	explicit ProducerConsumer_Ex(producer_type prod, size_t size = 0)
+		: ProducerConsumer_Ex{ size }
+	{
+		open();
+		produce(prod);
+	}
+
+	~ProducerConsumer_Ex() = default;
+
+	ProducerConsumer_Ex(ProducerConsumer_Ex&) = delete;
+	ProducerConsumer_Ex(ProducerConsumer_Ex&&) = delete;
+	ProducerConsumer_Ex& operator=(ProducerConsumer_Ex&) = delete;
+	ProducerConsumer_Ex& operator=(ProducerConsumer_Ex&&) = delete;
+
+	bool is_opened() const { return inner_.is_opened(); }
+
+	void open()
+	{
+		running_ = true;
+		inner_.open();
+	}
+	void close()
+	{
+		running_ = false;
+		inner_.close();
+
+		while (count_ != 0)
+			std::this_thread::yield();
+	}
+
+	void produce(producer_type prod)
+	{
+		++count_;
+		std::thread thd([this, prod] {
+			while (this->running_) {
+				this->push(prod());
+			}
+			--this->count_;
+		});
+		thd.detach();
+	}
+
+	void consume(consumer_type consumer)
+	{
+		++count_;
+		std::thread thd([this, consumer] {
+			for (const auto &v : this->inner_) {
+				consumer(v);
+			}
+			--this->count_;
+		});
+		thd.detach();
+	}
+
+	bool empty() const { return inner_.empty(); }
+	size_type size() const { return inner_.size(); }
+
+	void push(value_type v) noexcept { inner_.push(v); }
+
+private:
+	bool running_;
+	std::atomic_int count_;
+	inner_type inner_;
 };
