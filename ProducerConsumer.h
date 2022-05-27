@@ -12,9 +12,7 @@ public:
 	using container_type_pointer = container_type*;
 	using value_type             = typename container_type::value_type;
 	using reference              = typename container_type::reference;
-	using const_reference        = const reference;
 	using pointer                = value_type*;
-	using const_pointor          = const value_type*;
 	using size_type              = typename container_type::size_type;
 	using difference_type        = typename container_type::difference_type;
 	using iterator_category      = std::forward_iterator_tag;
@@ -53,7 +51,7 @@ public:
 	ProducerConsumerIterator& operator++()
 	{
 		v_ = c_->pop();
-		end_ = c_->is_opened();
+		end_ = !c_->is_opened();
 		return *this;
 	}
 
@@ -90,7 +88,12 @@ public:
 	bool is_opened() const { return !end_; }
 
 	void open() { end_ = false; }
-	void close() { end_ = true; }
+	void close()
+	{
+		end_ = true;
+		not_full_.notify_all();
+		not_empty_.notify_all();
+	}
 
 	iterator begin() noexcept
 	{
@@ -124,7 +127,7 @@ public:
 
 
 		std::unique_lock<std::mutex> lock{ mutex_ };
-		not_empty_.wait(lock, [this] { return (this->end_ || this->values_.size() > 0); });
+		not_empty_.wait(lock, [this]{ return (this->end_ || this->values_.size() > 0); });
 
 		value_mutex_.lock();
 		if (end_ || values_.empty()) {
